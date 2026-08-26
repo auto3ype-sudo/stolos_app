@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
-import datetime
 import re
+import numpy as np
+from PIL import Image
 import pdfplumber
 
 st.set_page_config(
@@ -9,6 +10,12 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Φόρτωση του EasyOCR Engine (Lazy Load για ταχύτητα)
+@st.cache_resource
+def load_ocr_reader():
+    import easyocr
+    return easyocr.Reader(['el', 'en'], gpu=False)
 
 if "vehicles" not in st.session_state:
     st.session_state.vehicles = pd.DataFrame(columns=[
@@ -18,64 +25,78 @@ if "vehicles" not in st.session_state:
     ])
 
 def parse_pdf_registration(pdf_file):
-    """Εξαγωγή στοιχείων από PDF άδειας κυκλοφορίας"""
+    """Εξαγωγή στοιχείων από PDF άδειας κυκλοφορίας με χρήση OCR"""
+    plate, vin, make_model, fuel = None, "Δ/Α", "Έγγραφο Άδειας (PDF)", "Δ/Α"
+    
+    # 1. Προσπάθεια ανάγνωσης με pdfplumber (Text PDF)
     try:
         with pdfplumber.open(pdf_file) as pdf:
-            text = "\n".join([page.extract_text() or "" for page in pdf.pages])
-        
-        # 1. Πινακίδα
-        plate_match = re.search(r'(?:ΑΡΙΘΜΟΣ ΚΥΚΛΟΦΟΡΙΑΣ|ΑΡΙΘ\. ΚΥΚΛΟΦΟΡΙΑΣ)\s*[:\.]?\s*([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', text, re.IGNORECASE)
-        plate = plate_match.group(1).replace(" ", "") if plate_match else None
-        if not plate:
-            match = re.search(r'([A-ZΆ-Ω]{3}\s*\d{4})', pdf_file.name.upper())
-            plate = match.group(1) if match else pdf_file.name.replace('.pdf', '')
-
-        # 2. VIN / Αριθμός Πλαισίου (Πεδίο E)
-        vin_match = re.search(r'\((?:E|Ε)\)\s*([A-HJ-NPR-Z0-9]{17})', text)
-        vin = vin_match.group(1) if vin_match else "Δ/Α"
-
-        # 3. Μάρκα & Μοντέλο (Πεδία D.1 / D.3)
-        make_match = re.search(r'\(D\.1\)\s*([^\n]+)', text)
-        model_match = re.search(r'\(D\.3\)\s*([^\n]+)', text)
-        make = make_match.group(1).strip() if make_match else ""
-        model = model_match.group(1).strip() if model_match else ""
-        make_model = f"{make} {model}".strip() or "Έγγραφο Άδειας (PDF)"
-
-        # 4. Καύσιμο (Πεδίο P.3)
-        fuel_match = re.search(r'\(P\.3\)\s*([^\n]+)', text)
-        fuel = fuel_match.group(1).strip() if fuel_match else "Δ/Α"
-
-        return {
-            "VIN": vin,
-            "LicensePlate": plate,
-            "MakeModel": make_model,
-            "Year": 2020,
-            "FuelType": fuel,
-            "Status": "Ενεργό",
-            "Driver": "Αναμονή",
-            "TotalKM": 0.0,
-            "MonthlyKM": 0.0,
-            "TireCondition": "Καλή",
-            "TotalMaintenanceCost": 0.0,
-            "SustainabilityStatus": "ΟΚ"
-        }
+            full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
     except Exception:
-        match = re.search(r'([A-ZΆ-Ω]{3}\s*\d{4})', pdf_file.name.upper())
-        plate = match.group(1) if match else pdf_file.name.replace('.pdf', '')
-        return {
-            "VIN": "Δ/Α",
-            "LicensePlate": plate,
-            "MakeModel": "Έγγραφο Άδειας (PDF)",
-            "Year": 2020,
-            "FuelType": "Δ/Α",
-            "Status": "Ενεργό",
-            "Driver": "Αναμονή",
-            "TotalKM": 0.0,
-            "MonthlyKM": 0.0,
-            "TireCondition": "Καλή",
-            "TotalMaintenanceCost": 0.0,
-            "SustainabilityStatus": "ΟΚ"
-        }
+        full_text = ""
+
+    # Αν το PDF είναι σκαναρισμένο (εικόνα), χρησιμοποιούμε EasyOCR
+    if len(full_text.strip()) < 20:
+        try:
+            reader = load_ocr_reader()
+            with pdfplumber.open(pdf_file) as pdf:
+                full_text = ""
+                for page in pdf.pages:
+                    pix = page.to_image(resolution=150)
+                    img = pix.original
+                    results = reader.readtext(np.array(img), detail=0)
+                    full_text += "\n" + "\n".join(results)
+        except Exception:
+            pass
+
+    # --- REGEX PARSING ---
+    # Πινακίδα (ΑΡΙΘΜΟΣ ΚΥΚΛΟΦΟΡΙΑΣ)
+    plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', full_text.upper())
+    if plate_match:
+        plate = plate_match.group(1).replace(" ", "").replace("-", "")
+    else:
+        file_match = re.search(r'([A-ZΆ-Ω]{3}\s*\d{4})', pdf_file.name.upper())
+        plate = file_match.group(1) if file_match else pdf_file.name.replace('.pdf', '')
+
+    # VIN / Αριθμός Πλαισίου (Πεδίο E - 17 χαρακτήρες)
+    vin_match = re.search(r'\b([A-HJ-NPR-Z0-9]{17})\b', full_text.upper())
+    if vin_match:
+        vin = vin_match.group(1)
+
+    # Καύσιμο (Πεδίο P.3)
+    if "PETROL" in full_text.upper() or "BENZIN" in full_text.upper() or "ΒΕΝΖΙΝΗ" in full_text.upper():
+        fuel = "Βενζίνη"
+    elif "DIESEL" in full_text.upper() or "ΠΕΤΡΕΛΑΙΟ" in full_text.upper():
+        fuel = "Diesel"
+
+    # Μάρκα / Μοντέλο
+    makes = ["TOYOTA", "MERCEDES", "FORD", "NISSAN", "VOLKSWAGEN", "FIAT", "PEUGEOT", "RENAULT", "SKODA", "CITROEN"]
+    found_make = ""
+    for m in makes:
+        if m in full_text.upper():
+            found_make = m
+            break
+    
+    if found_make:
+        make_model = found_make
+        if "YARIS" in full_text.upper(): make_model += " Yaris"
+        elif "SPRINTER" in full_text.upper(): make_model += " Sprinter"
+        elif "TRANSIT" in full_text.upper(): make_model += " Transit"
+
+    return {
+        "VIN": vin,
+        "LicensePlate": plate,
+        "MakeModel": make_model,
+        "Year": 2020,
+        "FuelType": fuel,
+        "Status": "Ενεργό",
+        "Driver": "Αναμονή",
+        "TotalKM": 0.0,
+        "MonthlyKM": 0.0,
+        "TireCondition": "Καλή",
+        "TotalMaintenanceCost": 0.0,
+        "SustainabilityStatus": "ΟΚ"
+    }
 
 st.sidebar.title("🚛 Fleet Manager v2.0")
 st.sidebar.caption("Google Account: auto3ype@gmail.com")
