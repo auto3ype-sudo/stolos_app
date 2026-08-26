@@ -98,7 +98,9 @@ def parse_pdf_registration(pdf_file):
         "SustainabilityStatus": "ΟΚ"
     }
 
-st.sidebar.title("🚛 Fleet Manager v2.0")
+# --- SIDEBAR & VERSION CHECK ---
+st.sidebar.title("🚛 Fleet Manager")
+st.sidebar.success("📌 Εκδοση: **v2.1 - OCR Powered**")
 st.sidebar.caption("Google Account: auto3ype@gmail.com")
 
 menu = st.sidebar.radio(
