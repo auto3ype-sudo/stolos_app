@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import re
 import numpy as np
-from PIL import Image
 import pdfplumber
 
 st.set_page_config(
@@ -11,12 +10,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Φόρτωση του EasyOCR Engine (Lazy Load για ταχύτητα)
-@st.cache_resource
-def load_ocr_reader():
-    import easyocr
-    return easyocr.Reader(['el', 'en'], gpu=False)
-
+# Αρχικοποίηση session state
 if "vehicles" not in st.session_state:
     st.session_state.vehicles = pd.DataFrame(columns=[
         "VIN", "LicensePlate", "MakeModel", "Year", "FuelType",
@@ -24,18 +18,22 @@ if "vehicles" not in st.session_state:
         "TotalMaintenanceCost", "SustainabilityStatus"
     ])
 
+# Φόρτωση του EasyOCR Engine
+@st.cache_resource
+def load_ocr_reader():
+    import easyocr
+    return easyocr.Reader(['el', 'en'], gpu=False)
+
 def parse_pdf_registration(pdf_file):
-    """Εξαγωγή στοιχείων από PDF άδειας κυκλοφορίας με χρήση OCR"""
+    """Εξαγωγή στοιχείων από PDF άδειας κυκλοφορίας"""
     plate, vin, make_model, fuel = None, "Δ/Α", "Έγγραφο Άδειας (PDF)", "Δ/Α"
     
-    # 1. Προσπάθεια ανάγνωσης με pdfplumber (Text PDF)
     try:
         with pdfplumber.open(pdf_file) as pdf:
             full_text = "\n".join([page.extract_text() or "" for page in pdf.pages])
     except Exception:
         full_text = ""
 
-    # Αν το PDF είναι σκαναρισμένο (εικόνα), χρησιμοποιούμε EasyOCR
     if len(full_text.strip()) < 20:
         try:
             reader = load_ocr_reader()
@@ -49,8 +47,7 @@ def parse_pdf_registration(pdf_file):
         except Exception:
             pass
 
-    # --- REGEX PARSING ---
-    # Πινακίδα (ΑΡΙΘΜΟΣ ΚΥΚΛΟΦΟΡΙΑΣ)
+    # REGEX PARSING
     plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', full_text.upper())
     if plate_match:
         plate = plate_match.group(1).replace(" ", "").replace("-", "")
@@ -58,18 +55,15 @@ def parse_pdf_registration(pdf_file):
         file_match = re.search(r'([A-ZΆ-Ω]{3}\s*\d{4})', pdf_file.name.upper())
         plate = file_match.group(1) if file_match else pdf_file.name.replace('.pdf', '')
 
-    # VIN / Αριθμός Πλαισίου (Πεδίο E - 17 χαρακτήρες)
     vin_match = re.search(r'\b([A-HJ-NPR-Z0-9]{17})\b', full_text.upper())
     if vin_match:
         vin = vin_match.group(1)
 
-    # Καύσιμο (Πεδίο P.3)
     if "PETROL" in full_text.upper() or "BENZIN" in full_text.upper() or "ΒΕΝΖΙΝΗ" in full_text.upper():
         fuel = "Βενζίνη"
     elif "DIESEL" in full_text.upper() or "ΠΕΤΡΕΛΑΙΟ" in full_text.upper():
         fuel = "Diesel"
 
-    # Μάρκα / Μοντέλο
     makes = ["TOYOTA", "MERCEDES", "FORD", "NISSAN", "VOLKSWAGEN", "FIAT", "PEUGEOT", "RENAULT", "SKODA", "CITROEN"]
     found_make = ""
     for m in makes:
@@ -98,9 +92,9 @@ def parse_pdf_registration(pdf_file):
         "SustainabilityStatus": "ΟΚ"
     }
 
-# --- SIDEBAR & VERSION CHECK ---
+# --- SIDEBAR ---
 st.sidebar.title("🚛 Fleet Manager")
-st.sidebar.success("📌 Εκδοση: **v2.1 - OCR Powered**")
+st.sidebar.success("📌 Εκδοση: **v2.3 - Fixed Sync**")
 st.sidebar.caption("Google Account: auto3ype@gmail.com")
 
 menu = st.sidebar.radio(
@@ -112,6 +106,16 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Κατάσταση Στόλου")
 total_count = len(st.session_state.vehicles)
 st.sidebar.write(f"Συνολικά Οχήματα: **{total_count}**")
+
+# Κουμπί Download Backup στη Sidebar
+if not st.session_state.vehicles.empty:
+    csv = st.session_state.vehicles.to_csv(index=False).encode('utf-8')
+    st.sidebar.download_button(
+        label="📥 Λήψη Backup (CSV)",
+        data=csv,
+        file_name="fleet_backup.csv",
+        mime="text/csv"
+    )
 
 # PAGE 1: DASHBOARD
 if menu == "Dashboard Στόλου":
@@ -170,57 +174,55 @@ elif menu == "Εισαγωγή PDF & Excel":
     )
     
     if uploaded_files:
-        parsed_vehicles = []
-        
-        for file in uploaded_files:
-            st.write(f"📄 **Επεξεργασία αρχείου:** `{file.name}`")
+        if st.button("🔄 Επεξεργασία & Συγχρονισμός στο Dashboard", type="primary"):
+            parsed_vehicles = []
             
-            if file.name.endswith(('.xlsx', '.xls')):
-                try:
-                    xl = pd.ExcelFile(file)
-                    for sheet in xl.sheet_names:
-                        if "ΟΧΗΜΑΤΑ" in sheet.upper():
-                            df_sheet = xl.parse(sheet)
-                            for _, row in df_sheet.iterrows():
-                                plate = row.get("ΑΡΙΘΜ_ΚΥΚΛ")
-                                if pd.isna(plate) or str(plate).strip() == "":
-                                    continue
-                                
-                                clean_plate = str(plate).strip()
-                                make = str(row.get("ΚΑΤΑΣΚΕΥΑΣΤΗΣ", "")) if pd.notna(row.get("ΚΑΤΑΣΚΕΥΑΣΤΗΣ")) else ""
-                                model = str(row.get("ΜΟΝΤΕΛΟ", "")) if pd.notna(row.get("ΜΟΝΤΕΛΟ")) else ""
-                                
-                                parsed_vehicles.append({
-                                    "VIN": str(row.get("ΑΡΙΘΜ_ΠΛΑΙΣΙΟΥ", "Δ/Α")),
-                                    "LicensePlate": clean_plate,
-                                    "MakeModel": f"{make} {model}".strip() or "Άγνωστο",
-                                    "Year": 2020,
-                                    "FuelType": str(row.get("ΚΑΥΣΙΜΟ", "Diesel")),
-                                    "Status": "Ενεργό",
-                                    "Driver": str(row.get("ΦΟΡΕΑΣ_ΧΡΗΣΗΣ", "Αναμονή")),
-                                    "TotalKM": float(row.get("ΧΛΜ_1_1_2022", 0)) if pd.notna(row.get("ΧΛΜ_1_1_2022")) else 0.0,
-                                    "MonthlyKM": 0.0,
-                                    "TireCondition": "Καλή",
-                                    "TotalMaintenanceCost": 0.0,
-                                    "SustainabilityStatus": "ΟΚ"
-                                })
-                except Exception as e:
-                    st.error(f"Σφάλμα ανάγνωσης Excel `{file.name}`: {e}")
+            with st.spinner("Γίνεται επεξεργασία των αρχείων..."):
+                for file in uploaded_files:
+                    if file.name.endswith(('.xlsx', '.xls')):
+                        try:
+                            xl = pd.ExcelFile(file)
+                            for sheet in xl.sheet_names:
+                                if "ΟΧΗΜΑΤΑ" in sheet.upper():
+                                    df_sheet = xl.parse(sheet)
+                                    for _, row in df_sheet.iterrows():
+                                        plate = row.get("ΑΡΙΘΜ_ΚΥΚΛ")
+                                        if pd.isna(plate) or str(plate).strip() == "":
+                                            continue
+                                        
+                                        clean_plate = str(plate).strip()
+                                        make = str(row.get("ΚΑΤΑΣΚΕΥΑΣΤΗΣ", "")) if pd.notna(row.get("ΚΑΤΑΣΚΕΥΑΣΤΗΣ")) else ""
+                                        model = str(row.get("ΜΟΝΤΕΛΟ", "")) if pd.notna(row.get("ΜΟΝΤΕΛΟ")) else ""
+                                        
+                                        parsed_vehicles.append({
+                                            "VIN": str(row.get("ΑΡΙΘΜ_ΠΛΑΙΣΙΟΥ", "Δ/Α")),
+                                            "LicensePlate": clean_plate,
+                                            "MakeModel": f"{make} {model}".strip() or "Άγνωστο",
+                                            "Year": 2020,
+                                            "FuelType": str(row.get("ΚΑΥΣΙΜΟ", "Diesel")),
+                                            "Status": "Ενεργό",
+                                            "Driver": str(row.get("ΦΟΡΕΑΣ_ΧΡΗΣΗΣ", "Αναμονή")),
+                                            "TotalKM": float(row.get("ΧΛΜ_1_1_2022", 0)) if pd.notna(row.get("ΧΛΜ_1_1_2022")) else 0.0,
+                                            "MonthlyKM": 0.0,
+                                            "TireCondition": "Καλή",
+                                            "TotalMaintenanceCost": 0.0,
+                                            "SustainabilityStatus": "ΟΚ"
+                                        })
+                        except Exception as e:
+                            st.error(f"Σφάλμα Excel `{file.name}`: {e}")
 
-            elif file.name.endswith('.pdf'):
-                try:
-                    parsed_item = parse_pdf_registration(file)
-                    parsed_vehicles.append(parsed_item)
-                except Exception as e:
-                    st.error(f"Σφάλμα ανάγνωσης PDF `{file.name}`: {e}")
+                    elif file.name.endswith('.pdf'):
+                        try:
+                            parsed_item = parse_pdf_registration(file)
+                            parsed_vehicles.append(parsed_item)
+                        except Exception as e:
+                            st.error(f"Σφάλμα PDF `{file.name}`: {e}")
 
-        st.markdown("---")
-        if st.button("🔄 Συγχρονισμός & Ενημέρωση Στόλου στο Dashboard", type="primary"):
-            if parsed_vehicles:
-                new_df = pd.DataFrame(parsed_vehicles)
-                st.session_state.vehicles = pd.concat([st.session_state.vehicles, new_df], ignore_index=True).drop_duplicates(subset=["LicensePlate"], keep="first").reset_index(drop=True)
-                st.success(f"Ενημερώθηκαν {len(st.session_state.vehicles)} οχήματα από τα αρχεία σας!")
-                st.rerun()
+                if parsed_vehicles:
+                    new_df = pd.DataFrame(parsed_vehicles)
+                    st.session_state.vehicles = pd.concat([st.session_state.vehicles, new_df], ignore_index=True).drop_duplicates(subset=["LicensePlate"], keep="first").reset_index(drop=True)
+                    st.success(f"Ενημερώθηκαν επιτυχώς {len(parsed_vehicles)} οχήματα!")
+                    st.info("💡 Μεταβείτε στο 'Dashboard Στόλου' από τη στήλη αριστερά για να δείτε τα αποτελέσματα.")
 
 # PAGE 4: GOOGLE DRIVE WATCHER
 elif menu == "Google Drive Watcher":
