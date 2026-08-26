@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import re
+import pdfplumber
 
 st.set_page_config(
     page_title="Fleet Management System",
@@ -15,6 +16,66 @@ if "vehicles" not in st.session_state:
         "Status", "Driver", "TotalKM", "MonthlyKM", "TireCondition",
         "TotalMaintenanceCost", "SustainabilityStatus"
     ])
+
+def parse_pdf_registration(pdf_file):
+    """Εξαγωγή στοιχείων από PDF άδειας κυκλοφορίας"""
+    try:
+        with pdfplumber.open(pdf_file) as pdf:
+            text = "\n".join([page.extract_text() or "" for page in pdf.pages])
+        
+        # 1. Πινακίδα
+        plate_match = re.search(r'(?:ΑΡΙΘΜΟΣ ΚΥΚΛΟΦΟΡΙΑΣ|ΑΡΙΘ\. ΚΥΚΛΟΦΟΡΙΑΣ)\s*[:\.]?\s*([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', text, re.IGNORECASE)
+        plate = plate_match.group(1).replace(" ", "") if plate_match else None
+        if not plate:
+            match = re.search(r'([A-ZΆ-Ω]{3}\s*\d{4})', pdf_file.name.upper())
+            plate = match.group(1) if match else pdf_file.name.replace('.pdf', '')
+
+        # 2. VIN / Αριθμός Πλαισίου (Πεδίο E)
+        vin_match = re.search(r'\((?:E|Ε)\)\s*([A-HJ-NPR-Z0-9]{17})', text)
+        vin = vin_match.group(1) if vin_match else "Δ/Α"
+
+        # 3. Μάρκα & Μοντέλο (Πεδία D.1 / D.3)
+        make_match = re.search(r'\(D\.1\)\s*([^\n]+)', text)
+        model_match = re.search(r'\(D\.3\)\s*([^\n]+)', text)
+        make = make_match.group(1).strip() if make_match else ""
+        model = model_match.group(1).strip() if model_match else ""
+        make_model = f"{make} {model}".strip() or "Έγγραφο Άδειας (PDF)"
+
+        # 4. Καύσιμο (Πεδίο P.3)
+        fuel_match = re.search(r'\(P\.3\)\s*([^\n]+)', text)
+        fuel = fuel_match.group(1).strip() if fuel_match else "Δ/Α"
+
+        return {
+            "VIN": vin,
+            "LicensePlate": plate,
+            "MakeModel": make_model,
+            "Year": 2020,
+            "FuelType": fuel,
+            "Status": "Ενεργό",
+            "Driver": "Αναμονή",
+            "TotalKM": 0.0,
+            "MonthlyKM": 0.0,
+            "TireCondition": "Καλή",
+            "TotalMaintenanceCost": 0.0,
+            "SustainabilityStatus": "ΟΚ"
+        }
+    except Exception:
+        match = re.search(r'([A-ZΆ-Ω]{3}\s*\d{4})', pdf_file.name.upper())
+        plate = match.group(1) if match else pdf_file.name.replace('.pdf', '')
+        return {
+            "VIN": "Δ/Α",
+            "LicensePlate": plate,
+            "MakeModel": "Έγγραφο Άδειας (PDF)",
+            "Year": 2020,
+            "FuelType": "Δ/Α",
+            "Status": "Ενεργό",
+            "Driver": "Αναμονή",
+            "TotalKM": 0.0,
+            "MonthlyKM": 0.0,
+            "TireCondition": "Καλή",
+            "TotalMaintenanceCost": 0.0,
+            "SustainabilityStatus": "ΟΚ"
+        }
 
 st.sidebar.title("🚛 Fleet Manager v2.0")
 st.sidebar.caption("Google Account: auto3ype@gmail.com")
@@ -91,7 +152,6 @@ elif menu == "Εισαγωγή PDF & Excel":
         for file in uploaded_files:
             st.write(f"📄 **Επεξεργασία αρχείου:** `{file.name}`")
             
-            # --- ΕΠΕΞΕΡΓΑΣΙΑ EXCEL ---
             if file.name.endswith(('.xlsx', '.xls')):
                 try:
                     xl = pd.ExcelFile(file)
@@ -124,27 +184,10 @@ elif menu == "Εισαγωγή PDF & Excel":
                 except Exception as e:
                     st.error(f"Σφάλμα ανάγνωσης Excel `{file.name}`: {e}")
 
-            # --- ΕΠΕΞΕΡΓΑΣΙΑ PDF ---
             elif file.name.endswith('.pdf'):
                 try:
-                    # Εξαγωγή Πινακίδας από το όνομα του αρχείου (π.χ. KHH 2490)
-                    match = re.search(r'([A-ZΆ-Ω]{3}\s*\d{4})', file.name.upper())
-                    extracted_plate = match.group(1) if match else file.name.replace('.pdf', '')
-
-                    parsed_vehicles.append({
-                        "VIN": "Αναμονή Scan",
-                        "LicensePlate": extracted_plate,
-                        "MakeModel": "Έγγραφο Άδειας (PDF)",
-                        "Year": 2020,
-                        "FuelType": "Δ/Α",
-                        "Status": "Ενεργό",
-                        "Driver": "Αναμονή",
-                        "TotalKM": 0.0,
-                        "MonthlyKM": 0.0,
-                        "TireCondition": "Καλή",
-                        "TotalMaintenanceCost": 0.0,
-                        "SustainabilityStatus": "ΟΚ"
-                    })
+                    parsed_item = parse_pdf_registration(file)
+                    parsed_vehicles.append(parsed_item)
                 except Exception as e:
                     st.error(f"Σφάλμα ανάγνωσης PDF `{file.name}`: {e}")
 
