@@ -1,7 +1,1 @@
-streamlit
-pandas
-pdfplumber
-openpyxl
-pdf2image
-easyocr
-opencv-python-headless
+
