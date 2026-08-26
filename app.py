@@ -1,17 +1,13 @@
 import streamlit as st
 import pandas as pd
 import datetime
-import json
-import os
 
-# SETUP & CONFIGURATION
 st.set_page_config(
     page_title="Fleet Management System",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Initialize Session State Database
 if "vehicles" not in st.session_state:
     st.session_state.vehicles = pd.DataFrame(columns=[
         "VIN", "LicensePlate", "MakeModel", "Year", "FuelType",
@@ -19,7 +15,6 @@ if "vehicles" not in st.session_state:
         "TotalMaintenanceCost", "SustainabilityStatus"
     ])
 
-# SIDEBAR NAVIGATION
 st.sidebar.title("🚛 Fleet Manager v2.0")
 st.sidebar.caption("Google Account: auto3ype@gmail.com")
 
@@ -37,7 +32,6 @@ st.sidebar.write(f"Συνολικά Οχήματα: **{total_count}**")
 if menu == "Dashboard Στόλου":
     st.title("📊 Επισκόπηση Στόλου Οχημάτων")
     
-    # Υπολογισμός οχημάτων ανά κατάσταση
     active_count = len(st.session_state.vehicles[st.session_state.vehicles['Status'] == 'Ενεργό']) if not st.session_state.vehicles.empty else 0
     breakdown_count = len(st.session_state.vehicles[st.session_state.vehicles['Status'] == 'Σε Βλάβη']) if not st.session_state.vehicles.empty else 0
     pending_retire_count = len(st.session_state.vehicles[st.session_state.vehicles['Status'] == 'Σε Απόσυρση']) if not st.session_state.vehicles.empty else 0
@@ -54,13 +48,28 @@ if menu == "Dashboard Στόλου":
     if st.session_state.vehicles.empty:
         st.info("Δεν έχουν καταχωρηθεί ακόμα οχήματα. Χρησιμοποιήστε την ενότητα 'Εισαγωγή PDF & Excel' για μαζική εισαγωγή.")
     else:
-        status_filter = st.multiselect(
-            "Φιλτράρισμα ανά Κατάσταση:",
-            options=["Ενεργό", "Σε Βλάβη", "Σε Απόσυρση", "Αποσύρθηκε"],
-            default=["Ενεργό", "Σε Βλάβη", "Σε Απόσυρση", "Αποσύρθηκε"]
-        )
-        filtered_df = st.session_state.vehicles[st.session_state.vehicles['Status'].isin(status_filter)]
+        # Φίλτρο με Checkboxes αντί για κόκκινα tags
+        st.write("🔍 **Φιλτράρισμα Προβολής:**")
+        f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+        show_active = f_col1.checkbox("🟢 Ενεργά", value=True)
+        show_breakdown = f_col2.checkbox("🟠 Σε Βλάβη", value=True)
+        show_pending = f_col3.checkbox("🟡 Σε Απόσυρση", value=True)
+        show_retired = f_col4.checkbox("🔴 Αποσύρθηκαν", value=True)
+
+        selected_statuses = []
+        if show_active: selected_statuses.append("Ενεργό")
+        if show_breakdown: selected_statuses.append("Σε Βλάβη")
+        if show_pending: selected_statuses.append("Σε Απόσυρση")
+        if show_retired: selected_statuses.append("Αποσύρθηκε")
+
+        filtered_df = st.session_state.vehicles[st.session_state.vehicles['Status'].isin(selected_statuses)]
         st.dataframe(filtered_df, use_container_width=True)
+
+        # Καθαρισμός/Διαγραφή Δεδομένων αν χρειάζεται
+        st.markdown("---")
+        if st.button("🗑️ Καθαρισμός Όλων των Δεδομένων Στόλου", type="secondary"):
+            st.session_state.vehicles = st.session_state.vehicles.iloc[0:0]
+            st.rerun()
 
 # PAGE 2: VEHICLE CARD
 elif menu == "Καρτέλα Οχήματος":
@@ -70,7 +79,7 @@ elif menu == "Καρτέλα Οχήματος":
     else:
         selected_plate = st.selectbox("Επιλέξτε Πινακίδα Οχήματος", st.session_state.vehicles["LicensePlate"].unique())
         veh_info = st.session_state.vehicles[st.session_state.vehicles["LicensePlate"] == selected_plate]
-        st.write(veh_info)
+        st.dataframe(veh_info, use_container_width=True)
 
 # PAGE 3: IMPORT PDF & EXCEL
 elif menu == "Εισαγωγή PDF & Excel":
@@ -98,10 +107,11 @@ elif menu == "Εισαγωγή PDF & Excel":
                             
                             for _, row in df_sheet.iterrows():
                                 plate = row.get("ΑΡΙΘΜ_ΚΥΚΛ")
-                                if pd.isna(plate):
+                                if pd.isna(plate) or str(plate).strip() == "":
                                     continue
                                 
-                                # Ασφαλής εξαγωγή έτους κατασκευής
+                                clean_plate = str(plate).strip()
+
                                 raw_year = row.get("ΕΤΟΣ_ΚΑΤΑΣΚΕΥΗΣ")
                                 year_val = 2020
                                 if pd.notna(raw_year):
@@ -112,31 +122,39 @@ elif menu == "Εισαγωγή PDF & Excel":
                                             year_val = int(float(str(raw_year).split('-')[0]))
                                     except Exception:
                                         year_val = 2020
-                                
-                                # Χαρτογράφηση κατάστασης
-                                raw_status = str(row.get("ΛΕΙΤΟΥΡΓΙΚΗ_ΚΑΤΑΣΤΑΣΗ", "")).upper()
-                                if "ΚΑΛΗ" in raw_status or "ΣΕ ΚΥΚΛΟΦΟΡΙΑ" in raw_status:
-                                    status = "Ενεργό"
-                                elif "ΒΛΑΒΗ" in raw_status or "ΕΠΙΣΚΕΥΗ" in raw_status:
-                                    status = "Σε Βλάβη"
-                                elif "ΠΑΡΟΠΛΙΣΜΕΝΟ" in raw_status or "ΑΠΟΣΥΡΣΗ" in raw_status:
+
+                                km_val = 0.0
+                                for km_col in ["ΧΛΜ_1_1_2022", "ΧΛΜ_1_5_2021", "ΧΛΜ_1_1_2020", "km"]:
+                                    if km_col in row and pd.notna(row[km_col]):
+                                        try:
+                                            km_val = float(row[km_col])
+                                            if km_val > 0:
+                                                break
+                                        except Exception:
+                                            pass
+
+                                raw_status = (str(row.get("ΛΕΙΤΟΥΡΓΙΚΗ_ΚΑΤΑΣΤΑΣΗ", "")) + " " + str(row.get("ΚΑΤΑΣΤΑΣΗ 1/11/2024", ""))).upper()
+                                if "ΠΑΡΟΠΛΙΣΜΕΝΟ" in raw_status or "ΑΠΟΣΥΡΣΗ" in raw_status or "ΕΠΙΣΤΡΑΦΕΙ" in raw_status:
                                     status = "Σε Απόσυρση"
+                                elif "ΒΛΑΒΗ" in raw_status or "ΕΠΙΣΚΕΥΗ" in raw_status or "ΚΑΚΗ" in raw_status:
+                                    status = "Σε Βλάβη"
                                 else:
                                     status = "Ενεργό"
-                                
+
+                                make = str(row.get("ΚΑΤΑΣΤΑΣΗ", "")) if not pd.isna(row.get("ΚΑΤΑΣΚΕΥΑΣΤΗΣ")) else ""
                                 make = str(row.get("ΚΑΤΑΣΚΕΥΑΣΤΗΣ", "")) if not pd.isna(row.get("ΚΑΤΑΣΚΕΥΑΣΤΗΣ")) else ""
                                 model = str(row.get("ΜΟΝΤΕΛΟ", "")) if not pd.isna(row.get("ΜΟΝΤΕΛΟ")) else ""
                                 make_model = f"{make} {model}".strip() or "Άγνωστο"
-                                
+
                                 parsed_vehicles.append({
                                     "VIN": str(row.get("ΑΡΙΘΜ_ΠΛΑΙΣΙΟΥ", "Δ/Α")),
-                                    "LicensePlate": str(plate).strip(),
+                                    "LicensePlate": clean_plate,
                                     "MakeModel": make_model,
                                     "Year": year_val,
                                     "FuelType": str(row.get("ΚΑΥΣΙΜΟ", "Diesel")),
                                     "Status": status,
                                     "Driver": str(row.get("ΦΟΡΕΑΣ_ΧΡΗΣΗΣ", "Αναμονή Ανάθεσης")),
-                                    "TotalKM": float(row.get("ΧΛΜ_1_1_2022", 0)) if (pd.notna(row.get("ΧΛΜ_1_1_2022")) and str(row.get("ΧΛΜ_1_1_2022")).replace('.','',1).isdigit()) else 0.0,
+                                    "TotalKM": km_val,
                                     "MonthlyKM": float(row.get("ΚΜ/ΕΤΟΣ", 0))/12 if (pd.notna(row.get("ΚΜ/ΕΤΟΣ")) and str(row.get("ΚΜ/ΕΤΟΣ")).replace('.','',1).isdigit()) else 0.0,
                                     "TireCondition": "Καλή",
                                     "TotalMaintenanceCost": 0.0,
@@ -149,8 +167,8 @@ elif menu == "Εισαγωγή PDF & Excel":
         if st.button("🔄 Συγχρονισμός & Ενημέρωση Στόλου στο Dashboard", type="primary"):
             if parsed_vehicles:
                 new_df = pd.DataFrame(parsed_vehicles)
-                st.session_state.vehicles = pd.concat([st.session_state.vehicles, new_df], ignore_index=True).drop_duplicates(subset=["LicensePlate"])
-                st.success(f"Εισήχθησαν επιτυχώς {len(st.session_state.vehicles)} οχήματα! Μεταβείτε στο 'Dashboard Στόλου'.")
+                st.session_state.vehicles = new_df.drop_duplicates(subset=["LicensePlate"], keep="first").reset_index(drop=True)
+                st.success(f"Ενημερώθηκαν {len(st.session_state.vehicles)} μοναδικά οχήματα!")
                 st.rerun()
 
 # PAGE 4: GOOGLE DRIVE WATCHER
