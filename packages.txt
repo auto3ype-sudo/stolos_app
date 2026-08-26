@@ -1,4 +1,7 @@
-ffmpeg
-libsm6
-libxext6
-poppler-utils
+streamlit
+pandas
+pdfplumber
+openpyxl
+pdf2image
+easyocr
+opencv-python-headless
