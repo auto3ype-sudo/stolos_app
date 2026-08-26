@@ -93,7 +93,6 @@ elif menu == "Εισαγωγή PDF & Excel":
                     st.success(f"Εντοπίστηκαν {len(xl.sheet_names)} φύλλα στο Excel: {', '.join(xl.sheet_names)}")
                     
                     for sheet in xl.sheet_names:
-                        # Διαβάζουμε μόνο τα φύλλα που περιέχουν λίστες οχημάτων
                         if "ΟΧΗΜΑΤΑ" in sheet.upper():
                             df_sheet = xl.parse(sheet)
                             
@@ -101,6 +100,18 @@ elif menu == "Εισαγωγή PDF & Excel":
                                 plate = row.get("ΑΡΙΘΜ_ΚΥΚΛ")
                                 if pd.isna(plate):
                                     continue
+                                
+                                # Ασφαλής εξαγωγή έτους κατασκευής
+                                raw_year = row.get("ΕΤΟΣ_ΚΑΤΑΣΚΕΥΗΣ")
+                                year_val = 2020
+                                if pd.notna(raw_year):
+                                    try:
+                                        if isinstance(raw_year, (pd.Timestamp, datetime.datetime)):
+                                            year_val = raw_year.year
+                                        else:
+                                            year_val = int(float(str(raw_year).split('-')[0]))
+                                    except Exception:
+                                        year_val = 2020
                                 
                                 # Χαρτογράφηση κατάστασης
                                 raw_status = str(row.get("ΛΕΙΤΟΥΡΓΙΚΗ_ΚΑΤΑΣΤΑΣΗ", "")).upper()
@@ -121,12 +132,12 @@ elif menu == "Εισαγωγή PDF & Excel":
                                     "VIN": str(row.get("ΑΡΙΘΜ_ΠΛΑΙΣΙΟΥ", "Δ/Α")),
                                     "LicensePlate": str(plate).strip(),
                                     "MakeModel": make_model,
-                                    "Year": int(row.get("ΕΤΟΣ_ΚΑΤΑΣΚΕΥΗΣ")) if pd.notna(row.get("ΕΤΟΣ_ΚΑΤΑΣΚΕΥΗΣ")) else 2020,
+                                    "Year": year_val,
                                     "FuelType": str(row.get("ΚΑΥΣΙΜΟ", "Diesel")),
                                     "Status": status,
                                     "Driver": str(row.get("ΦΟΡΕΑΣ_ΧΡΗΣΗΣ", "Αναμονή Ανάθεσης")),
-                                    "TotalKM": float(row.get("ΧΛΜ_1_1_2022", 0)) if pd.notna(row.get("ΧΛΜ_1_1_2022")) else 0,
-                                    "MonthlyKM": float(row.get("ΚΜ/ΕΤΟΣ", 0))/12 if pd.notna(row.get("ΚΜ/ΕΤΟΣ")) else 0,
+                                    "TotalKM": float(row.get("ΧΛΜ_1_1_2022", 0)) if (pd.notna(row.get("ΧΛΜ_1_1_2022")) and str(row.get("ΧΛΜ_1_1_2022")).replace('.','',1).isdigit()) else 0.0,
+                                    "MonthlyKM": float(row.get("ΚΜ/ΕΤΟΣ", 0))/12 if (pd.notna(row.get("ΚΜ/ΕΤΟΣ")) and str(row.get("ΚΜ/ΕΤΟΣ")).replace('.','',1).isdigit()) else 0.0,
                                     "TireCondition": "Καλή",
                                     "TotalMaintenanceCost": 0.0,
                                     "SustainabilityStatus": "ΟΚ"
@@ -139,7 +150,7 @@ elif menu == "Εισαγωγή PDF & Excel":
             if parsed_vehicles:
                 new_df = pd.DataFrame(parsed_vehicles)
                 st.session_state.vehicles = pd.concat([st.session_state.vehicles, new_df], ignore_index=True).drop_duplicates(subset=["LicensePlate"])
-                st.success(f"Εισήχθησαν επιτυχώς {len(st.session_state.vehicles)} πραγματικά οχήματα! Μεταβείτε στο 'Dashboard Στόλου'.")
+                st.success(f"Εισήχθησαν επιτυχώς {len(st.session_state.vehicles)} οχήματα! Μεταβείτε στο 'Dashboard Στόλου'.")
                 st.rerun()
 
 # PAGE 4: GOOGLE DRIVE WATCHER
