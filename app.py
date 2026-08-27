@@ -33,7 +33,7 @@ if "vehicles" not in st.session_state:
 
 # --- SIDEBAR ---
 st.sidebar.title("🚛 Fleet Manager")
-st.sidebar.success("📌 Έκδοση: **v3.6 - Advanced PDF Parsing**")
+st.sidebar.success("📌 Έκδοση: **v3.7 - Smart Header Matching**")
 st.sidebar.caption("Google Account: auto3ype@gmail.com")
 
 menu = st.sidebar.radio(
@@ -155,38 +155,82 @@ elif menu == "Εισαγωγή PDF & Excel":
                             xl = pd.ExcelFile(file)
                             for sheet in xl.sheet_names:
                                 df_sheet = xl.parse(sheet)
-                                df_sheet.columns = [str(c).strip().upper() for c in df_sheet.columns]
                                 
+                                # 1. Καθαρισμός ονομάτων στηλών (αφαίρεση \n, κενών και ειδικών χαρακτήρων)
+                                original_cols = df_sheet.columns.tolist()
+                                clean_cols = {}
+                                for c in original_cols:
+                                    clean_c = re.sub(r'[\r\n\t_]+', ' ', str(c)).strip().upper()
+                                    clean_c = re.sub(r'\s+', ' ', clean_c)
+                                    clean_cols[c] = clean_c
+                                df_sheet.rename(columns=clean_cols, inplace=True)
+
                                 for _, row in df_sheet.iterrows():
-                                    plate = row.get("ΑΡΙΘΜ_ΚΥΚΛ") or row.get("ΠΙΝΑΚΙΔΑ") or row.get("LICENSEPLATE")
+                                    # Αναζήτηση Πινακίδας
+                                    plate = None
+                                    for col in df_sheet.columns:
+                                        if any(k in col for k in ["ΑΡΙΘΜ_ΚΥΚΛ", "ΑΡΙΘΜ ΚΥΚΛ", "ΠΙΝΑΚΙΔΑ", "LICENSE", "PLATE"]):
+                                            plate = row[col]
+                                            break
+                                    
                                     if pd.isna(plate) or str(plate).strip() == "" or str(plate).strip() == "nan":
                                         continue
                                     
                                     clean_plate = str(plate).strip().upper().replace(" ", "").replace("-", "")
-                                    vin = str(row.get("ΑΡΙΘΜ_ΠΛΑΙΣΙΟΥ", row.get("VIN", "Δ/Α"))).strip()
-                                    make = str(row.get("ΚΑΤΑΣΚΕΥΑΣΤΗΣ", row.get("ΜΑΡΚΑ", ""))).strip()
-                                    model = str(row.get("ΜΟΝΤΕΛΟ", "")).strip()
-                                    fuel = str(row.get("ΚΑΥΣΙΜΟ", "BENZINH")).strip()
-                                    driver = str(row.get("ΦΟΡΕΑΣ_ΧΡΗΣΗΣ", row.get("ΟΔΗΓΟΣ", "Αναμονή"))).strip()
-                                    km = row.get("ΧΛΜ_1_1_2022", row.get("TOTALKM", 0))
                                     
-                                    year_val = (
-                                        row.get("ΕΤΟΣ_ΠΡΩΤΗΣ_ΚΥΚΛΟΦΟΡΙΑΣ") or 
-                                        row.get("ΕΤΟΣ ΠΡΩΤΗΣ ΚΥΚΛΟΦΟΡΙΑΣ") or 
-                                        row.get("ΕΤΟΣ_ΚΥΚΛΟΦΟΡΙΑΣ") or 
-                                        row.get("ΕΤΟΣ") or 
-                                        row.get("YEAR")
-                                    )
-                                    
-                                    try:
-                                        km_val = abs(float(km)) if pd.notna(km) else 0.0
-                                    except:
-                                        km_val = 0.0
+                                    # Αναζήτηση VIN
+                                    vin = "Δ/Α"
+                                    for col in df_sheet.columns:
+                                        if any(k in col for k in ["ΠΛΑΙΣΙΟΥ", "VIN", "FRAME"]):
+                                            vin = str(row[col]).strip()
+                                            break
+                                            
+                                    # Αναζήτηση Μάρκας & Μοντέλου
+                                    make, model = "", ""
+                                    for col in df_sheet.columns:
+                                        if any(k in col for k in ["ΚΑΤΑΣΚΕΥΑΣΤΗΣ", "ΜΑΡΚΑ", "MAKE"]):
+                                            make = str(row[col]).strip()
+                                        if any(k in col for k in ["ΜΟΝΤΕΛΟ", "MODEL"]):
+                                            model = str(row[col]).strip()
+
+                                    # Αναζήτηση Καυσίμου
+                                    fuel = "BENZINH"
+                                    for col in df_sheet.columns:
+                                        if any(k in col for k in ["ΚΑΥΣΙΜΟ", "FUEL"]):
+                                            fuel = str(row[col]).strip()
+                                            break
+
+                                    # Αναζήτηση Οδηγού / Φορέα
+                                    driver = "Αναμονή"
+                                    for col in df_sheet.columns:
+                                        if any(k in col for k in ["ΦΟΡΕΑΣ", "ΟΔΗΓΟΣ", "DRIVER", "ΧΡΗΣΗΣ"]):
+                                            driver = str(row[col]).strip()
+                                            break
+
+                                    # Αναζήτηση Χιλιομέτρων
+                                    km = 0.0
+                                    for col in df_sheet.columns:
+                                        if any(k in col for k in ["ΧΛΜ", "KM", "MILES"]):
+                                            try:
+                                                km = abs(float(row[col]))
+                                            except:
+                                                km = 0.0
+                                            break
+
+                                    # 2. ΕΞΥΠΝΗ ΑΝΑΖΗΤΗΣΗ ΕΤΟΥΣ ΠΡΩΤΗΣ ΚΥΚΛΟΦΟΡΙΑΣ
+                                    year_val = None
+                                    for col in df_sheet.columns:
+                                        if any(k in col for k in ["ΕΤΟΣ", "ΠΡΩΤΗΣ", "ΚΥΚΛΟΦΟΡΙΑΣ", "YEAR", "REGISTRATION"]):
+                                            val = row[col]
+                                            if pd.notna(val) and str(val).strip() != "" and str(val).strip().upper() != "NAN":
+                                                year_val = val
+                                                break
 
                                     try:
-                                        if pd.notna(year_val) and str(year_val).strip() != "":
+                                        if year_val is not None:
+                                            # Εξαγωγή 4ψηφιου αριθμού (π.χ. 2012 από "12/02/2012" ή "2012")
                                             year_match = re.search(r'\b(19\d{2}|20\d{2})\b', str(year_val))
-                                            year = int(year_match.group(0)) if year_match else str(year_val)
+                                            year = year_match.group(0) if year_match else str(int(float(year_val)))
                                         else:
                                             year = "Δεν αναγράφεται"
                                     except:
@@ -200,7 +244,7 @@ elif menu == "Εισαγωγή PDF & Excel":
                                         "FuelType": fuel if fuel != "nan" else "BENZINH",
                                         "Status": "Ενεργό",
                                         "Driver": driver if driver != "nan" else "Αναμονή",
-                                        "TotalKM": km_val,
+                                        "TotalKM": km,
                                         "MonthlyKM": 0.0,
                                         "TireCondition": "Καλή",
                                         "TotalMaintenanceCost": 0.0,
@@ -220,25 +264,20 @@ elif menu == "Εισαγωγή PDF & Excel":
                         except Exception as e:
                             st.warning(f"Αδυναμία ανάγνωσης κειμένου από το {file.name}: {e}")
 
-                        # 1. Πινακίδα
                         plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', extracted_text.upper())
                         if not plate_match:
                             plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', file.name.upper())
                         plate = plate_match.group(1).replace(" ", "").replace("-", "") if plate_match else "ΑΓΝΩΣΤΗ"
 
-                        # 2. Αριθμός Πλαισίου (VIN)
                         vin_match = re.search(r'\b[A-HJ-NPR-Z0-9]{17}\b', extracted_text.upper())
                         vin = vin_match.group(0) if vin_match else "Δ/Α"
 
-                        # 3. Έτος Πρώτης Κυκλοφορίας (Αναζήτηση ημερομηνιών ΗΗ/ΜΜ/ΕΕΕΕ)
                         dates_found = re.findall(r'\b\d{2}/\d{2}/(19\d{2}|20\d{2})\b', extracted_text)
                         pdf_year = dates_found[0] if dates_found else "Δεν αναγράφεται"
 
-                        # 4. Κάτοχος / Φορέας
                         holder_match = re.search(r'(ΝΟΣΟΚΟΜΕΙΟ[^\n]*|ΚΥ [^\n]*|ΔΗΜΟΣ[^\n]*)', extracted_text.upper())
                         driver = holder_match.group(0).strip() if holder_match else "Δημόσιος Φορέας"
 
-                        # 5. Καύσιμο
                         fuel = "BENZINH" if "BENZI" in extracted_text.upper() or "ΒΕΝΖΙΝΗ" in extracted_text.upper() else "PETRELAIO"
 
                         parsed_vehicles.append({
@@ -258,11 +297,9 @@ elif menu == "Εισαγωγή PDF & Excel":
 
                 if parsed_vehicles:
                     new_df = pd.DataFrame(parsed_vehicles)
-                    # Ενημέρωση και αφαίρεση διπλότυπων βάσει πινακίδας
                     st.session_state.vehicles = pd.concat([st.session_state.vehicles, new_df], ignore_index=True).drop_duplicates(subset=["LicensePlate"], keep="last").reset_index(drop=True)
                     st.session_state.vehicles.to_csv(DB_FILE, index=False)
                     st.success(f"Εισήχθησαν επιτυχώς {len(parsed_vehicles)} εγγραφές!")
-                    st.info("💡 Πατήστε '🗑️ Διαγραφή Δεδομένων' στη Sidebar αν θέλετε να καθαρίσετε τη βάση και να ανεβάσετε τα νέα αρχεία.")
 
 # PAGE 4: GOOGLE DRIVE WATCHER
 elif menu == "Google Drive Watcher":
