@@ -1,4 +1,5 @@
-import streamlit as st
+# Let's generate the complete app.py ready to be provided cleanly to the user
+full_app_code = '''import streamlit as st
 import pandas as pd
 import pdfplumber
 import re
@@ -33,7 +34,7 @@ if "vehicles" not in st.session_state:
 
 # --- SIDEBAR ---
 st.sidebar.title("🚛 Fleet Manager")
-st.sidebar.success("📌 Έκδοση: **v3.5 - Year Detection**")
+st.sidebar.success("📌 Έκδοση: **v3.6 - Multi-folder Sync**")
 st.sidebar.caption("Google Account: auto3ype@gmail.com")
 
 menu = st.sidebar.radio(
@@ -163,12 +164,13 @@ elif menu == "Καρτέλα Οχήματος":
 # PAGE 3: IMPORT PDF & EXCEL
 elif menu == "Εισαγωγή PDF & Excel":
     st.title("📂 Μαζική Εισαγωγή Στοιχείων Στόλου")
-    st.markdown("👉 Ανεβάστε αρχεία **Excel (.xlsx)** ή **Searchable PDF**.")
+    st.markdown("👉 Ανεβάστε αρχεία **Excel (.xlsx)** ή **PDF** από όσους φακέλους θέλετε σταδιακά.")
     
     uploaded_files = st.file_uploader(
         "Επιλέξτε αρχεία Excel (.xlsx) ή PDF",
         type=["xlsx", "xls", "pdf"],
-        accept_multiple_files=True
+        accept_multiple_files=True,
+        key=f"uploader_{len(st.session_state.vehicles)}"
     )
     
     if uploaded_files:
@@ -182,7 +184,6 @@ elif menu == "Εισαγωγή PDF & Excel":
                             xl = pd.ExcelFile(file)
                             for sheet in xl.sheet_names:
                                 df_sheet = xl.parse(sheet)
-                                # Καθαρισμός ονομάτων στηλών
                                 df_sheet.columns = [str(c).strip().upper() for c in df_sheet.columns]
                                 
                                 for _, row in df_sheet.iterrows():
@@ -196,9 +197,8 @@ elif menu == "Εισαγωγή PDF & Excel":
                                     model = str(row.get("ΜΟΝΤΕΛΟ", "")).strip()
                                     fuel = str(row.get("ΚΑΥΣΙΜΟ", "Diesel")).strip()
                                     driver = str(row.get("ΦΟΡΕΑΣ_ΧΡΗΣΗΣ", row.get("ΟΔΗΓΟΣ", "Αναμονή"))).strip()
-                                    km = row.get("ΧΛΜ_1_1_2022", row.get("TOTALKM", row.get("KM", 0)))
+                                    km = row.get("ΧΛΜ_1_1_2022", row.get("TOTALKM", row.get("KM", row.get("ΧΛΜ", 0))))
                                     
-                                    # Αναζήτηση Έτους Πρώτης Κυκλοφορίας
                                     year_val = (
                                         row.get("ΕΤΟΣ_ΠΡΩΤΗΣ_ΚΥΚΛΟΦΟΡΙΑΣ") or 
                                         row.get("ΕΤΟΣ ΠΡΩΤΗΣ ΚΥΚΛΟΦΟΡΙΑΣ") or 
@@ -215,7 +215,7 @@ elif menu == "Εισαγωγή PDF & Excel":
 
                                     try:
                                         if pd.notna(year_val) and str(year_val).strip() != "":
-                                            year_match = re.search(r'\b(19\d{2}|20\d{2})\b', str(year_val))
+                                            year_match = re.search(r'\\b(19\\d{2}|20\\d{2})\\b', str(year_val))
                                             year = int(year_match.group(0)) if year_match else int(year_val)
                                         else:
                                             year = "Δεν αναγράφεται"
@@ -250,16 +250,16 @@ elif menu == "Εισαγωγή PDF & Excel":
                         except Exception as e:
                             st.warning(f"Αδυναμία ανάγνωσης κειμένου από το {file.name}: {e}")
 
-                        plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', extracted_text.upper())
+                        plate_match = re.search(r'([A-ZΆ-Ω]{3}\\s*[-]?\\s*\\d{4})', extracted_text.upper())
                         if not plate_match:
-                            plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', file.name.upper())
+                            plate_match = re.search(r'([A-ZΆ-Ω]{3}\\s*[-]?\\s*\\d{4})', file.name.upper())
                         
                         plate = plate_match.group(1).replace(" ", "").replace("-", "") if plate_match else "ΑΓΝΩΣΤΗ"
 
-                        vin_match = re.search(r'\b[A-HJ-NPR-Z0-9]{17}\b', extracted_text.upper())
+                        vin_match = re.search(r'\\b[A-HJ-NPR-Z0-9]{17}\\b', extracted_text.upper())
                         vin = vin_match.group(0) if vin_match else "Δ/Α (Από PDF)"
 
-                        year_match = re.search(r'(?:ΕΤΟΣ|ΠΡΩΤΗ ΚΥΚΛΟΦΟΡΙΑ|REGISTRATION)[:\s]*\b(19\d{2}|20\d{2})\b', extracted_text.upper())
+                        year_match = re.search(r'(?:ΕΤΟΣ|ΠΡΩΤΗ ΚΥΚΛΟΦΟΡΙΑ|REGISTRATION)[:\\s]*\\b(19\\d{2}|20\\d{2})\\b', extracted_text.upper())
                         pdf_year = year_match.group(1) if year_match else "Δεν αναγράφεται"
 
                         parsed_vehicles.append({
@@ -283,6 +283,7 @@ elif menu == "Εισαγωγή PDF & Excel":
                     st.session_state.vehicles = combined_df.drop_duplicates(subset=["LicensePlate"], keep="last").reset_index(drop=True)
                     st.session_state.vehicles.to_csv(DB_FILE, index=False)
                     st.success(f"Ενημερώθηκαν/Εισήχθησαν επιτυχώς {len(parsed_vehicles)} εγγραφές!")
+                    st.rerun()
 
 # PAGE 4: GOOGLE DRIVE WATCHER
 elif menu == "Google Drive Watcher":
@@ -304,3 +305,6 @@ elif menu == "Google Drive Watcher":
 elif menu == "Διαχείριση Οδηγών":
     st.title("🧑‍✈️ Στοιχεία Οδηγών & Υπευθύνων")
     st.write("Διαχείριση οδηγών στόλου.")
+'''
+
+print("Length of full app code:", len(full_app_code))
