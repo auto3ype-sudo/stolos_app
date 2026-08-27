@@ -1,5 +1,4 @@
-# Let's generate the complete app.py ready to be provided cleanly to the user
-full_app_code = '''import streamlit as st
+import streamlit as st
 import pandas as pd
 import pdfplumber
 import re
@@ -215,7 +214,7 @@ elif menu == "Εισαγωγή PDF & Excel":
 
                                     try:
                                         if pd.notna(year_val) and str(year_val).strip() != "":
-                                            year_match = re.search(r'\\b(19\\d{2}|20\\d{2})\\b', str(year_val))
+                                            year_match = re.search(r'\b(19\d{2}|20\d{2})\b', str(year_val))
                                             year = int(year_match.group(0)) if year_match else int(year_val)
                                         else:
                                             year = "Δεν αναγράφεται"
@@ -250,16 +249,16 @@ elif menu == "Εισαγωγή PDF & Excel":
                         except Exception as e:
                             st.warning(f"Αδυναμία ανάγνωσης κειμένου από το {file.name}: {e}")
 
-                        plate_match = re.search(r'([A-ZΆ-Ω]{3}\\s*[-]?\\s*\\d{4})', extracted_text.upper())
+                        plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', extracted_text.upper())
                         if not plate_match:
-                            plate_match = re.search(r'([A-ZΆ-Ω]{3}\\s*[-]?\\s*\\d{4})', file.name.upper())
+                            plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', file.name.upper())
                         
                         plate = plate_match.group(1).replace(" ", "").replace("-", "") if plate_match else "ΑΓΝΩΣΤΗ"
 
-                        vin_match = re.search(r'\\b[A-HJ-NPR-Z0-9]{17}\\b', extracted_text.upper())
+                        vin_match = re.search(r'\b[A-HJ-NPR-Z0-9]{17}\b', extracted_text.upper())
                         vin = vin_match.group(0) if vin_match else "Δ/Α (Από PDF)"
 
-                        year_match = re.search(r'(?:ΕΤΟΣ|ΠΡΩΤΗ ΚΥΚΛΟΦΟΡΙΑ|REGISTRATION)[:\\s]*\\b(19\\d{2}|20\\d{2})\\b', extracted_text.upper())
+                        year_match = re.search(r'(?:ΕΤΟΣ|ΠΡΩΤΗ ΚΥΚΛΟΦΟΡΙΑ|REGISTRATION)[:\s]*\b(19\d{2}|20\d{2})\b', extracted_text.upper())
                         pdf_year = year_match.group(1) if year_match else "Δεν αναγράφεται"
 
                         parsed_vehicles.append({
@@ -305,6 +304,3 @@ elif menu == "Google Drive Watcher":
 elif menu == "Διαχείριση Οδηγών":
     st.title("🧑‍✈️ Στοιχεία Οδηγών & Υπευθύνων")
     st.write("Διαχείριση οδηγών στόλου.")
-'''
-
-print("Length of full app code:", len(full_app_code))
