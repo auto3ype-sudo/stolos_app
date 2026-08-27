@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import pdfplumber
 import re
+import os
 
 st.set_page_config(
     page_title="Fleet Management System",
@@ -9,17 +10,30 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Αρχικοποίηση session state
+# Όνομα τοπικού αρχείου αποθήκευσης (Βάση Δεδομένων)
+DB_FILE = "fleet_db.csv"
+
+# Αρχικοποίηση session state - Διαβάζει το αρχείο αν υπάρχει ήδη
 if "vehicles" not in st.session_state:
-    st.session_state.vehicles = pd.DataFrame(columns=[
-        "VIN", "LicensePlate", "MakeModel", "Year", "FuelType",
-        "Status", "Driver", "TotalKM", "MonthlyKM", "TireCondition",
-        "TotalMaintenanceCost", "SustainabilityStatus"
-    ])
+    if os.path.exists(DB_FILE):
+        try:
+            st.session_state.vehicles = pd.read_csv(DB_FILE)
+        except Exception:
+            st.session_state.vehicles = pd.DataFrame(columns=[
+                "VIN", "LicensePlate", "MakeModel", "Year", "FuelType",
+                "Status", "Driver", "TotalKM", "MonthlyKM", "TireCondition",
+                "TotalMaintenanceCost", "SustainabilityStatus"
+            ])
+    else:
+        st.session_state.vehicles = pd.DataFrame(columns=[
+            "VIN", "LicensePlate", "MakeModel", "Year", "FuelType",
+            "Status", "Driver", "TotalKM", "MonthlyKM", "TireCondition",
+            "TotalMaintenanceCost", "SustainabilityStatus"
+        ])
 
 # --- SIDEBAR ---
 st.sidebar.title("🚛 Fleet Manager")
-st.sidebar.success("📌 Έκδοση: **v3.2 - Clean Build**")
+st.sidebar.success("📌 Έκδοση: **v3.3 - Auto-Save Persistent**")
 st.sidebar.caption("Google Account: auto3ype@gmail.com")
 
 menu = st.sidebar.radio(
@@ -205,8 +219,13 @@ elif menu == "Εισαγωγή PDF & Excel":
 
                 if parsed_vehicles:
                     new_df = pd.DataFrame(parsed_vehicles)
+                    # Ενημέρωση state και αφαίρεση διπλότυπων
                     st.session_state.vehicles = pd.concat([st.session_state.vehicles, new_df], ignore_index=True).drop_duplicates(subset=["LicensePlate"], keep="first").reset_index(drop=True)
-                    st.success(f"Εισήχθησαν επιτυχώς {len(parsed_vehicles)} εγγραφές!")
+                    
+                    # ΑΠΟΘΗΚΕΥΣΗ ΣΕ ΤΟΠΙΚΟ CSV ΑΡΧΕΙΟ (ΔΕΝ ΧΑΝΟΝΤΑΙ ΜΕ REFRESH)
+                    st.session_state.vehicles.to_csv(DB_FILE, index=False)
+                    
+                    st.success(f"Εισήχθησαν επιτυχώς {len(parsed_vehicles)} εγγραφές και αποθηκεύτηκαν μόνιμα!")
                     st.info("💡 Μεταβείτε στο 'Dashboard Στόλου' για να δείτε τα αποτελέσματα.")
 
 # PAGE 4: GOOGLE DRIVE WATCHER
