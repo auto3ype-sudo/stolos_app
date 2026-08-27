@@ -33,7 +33,7 @@ if "vehicles" not in st.session_state:
 
 # --- SIDEBAR ---
 st.sidebar.title("🚛 Fleet Manager")
-st.sidebar.success("📌 Έκδοση: **v3.5 - Year Detection**")
+st.sidebar.success("📌 Έκδοση: **v3.6 - Advanced PDF Parsing**")
 st.sidebar.caption("Google Account: auto3ype@gmail.com")
 
 menu = st.sidebar.radio(
@@ -117,8 +117,7 @@ elif menu == "Καρτέλα Οχήματος":
             col_a, col_b = st.columns(2)
             with col_a:
                 st.write(f"**Μάρκα / Μοντέλο:** {veh_data.get('MakeModel', '-')}")
-                year_display = veh_data.get('Year', 'Δεν αναγράφεται')
-                st.write(f"**Έτος Πρώτης Κυκλοφορίας:** {year_display}")
+                st.write(f"**Έτος Πρώτης Κυκλοφορίας:** {veh_data.get('Year', 'Δεν αναγράφεται')}")
             with col_b:
                 st.write(f"**Τύπος Καυσίμου:** {veh_data.get('FuelType', '-')}")
                 st.write(f"**Βιωσιμότητα (ESG):** {veh_data.get('SustainabilityStatus', '-')}")
@@ -137,7 +136,7 @@ elif menu == "Καρτέλα Οχήματος":
 # PAGE 3: IMPORT PDF & EXCEL
 elif menu == "Εισαγωγή PDF & Excel":
     st.title("📂 Μαζική Εισαγωγή Στοιχείων Στόλου")
-    st.markdown("👉 Ανεβάστε αρχεία **Excel (.xlsx)** ή **Searchable PDF**.")
+    st.markdown("👉 Ανεβάστε αρχεία **Excel (.xlsx)** ή **PDF Αδειών Κυκλοφορίας**.")
     
     uploaded_files = st.file_uploader(
         "Επιλέξτε αρχεία Excel (.xlsx) ή PDF",
@@ -156,7 +155,6 @@ elif menu == "Εισαγωγή PDF & Excel":
                             xl = pd.ExcelFile(file)
                             for sheet in xl.sheet_names:
                                 df_sheet = xl.parse(sheet)
-                                # Καθαρισμός ονομάτων στηλών
                                 df_sheet.columns = [str(c).strip().upper() for c in df_sheet.columns]
                                 
                                 for _, row in df_sheet.iterrows():
@@ -168,18 +166,16 @@ elif menu == "Εισαγωγή PDF & Excel":
                                     vin = str(row.get("ΑΡΙΘΜ_ΠΛΑΙΣΙΟΥ", row.get("VIN", "Δ/Α"))).strip()
                                     make = str(row.get("ΚΑΤΑΣΚΕΥΑΣΤΗΣ", row.get("ΜΑΡΚΑ", ""))).strip()
                                     model = str(row.get("ΜΟΝΤΕΛΟ", "")).strip()
-                                    fuel = str(row.get("ΚΑΥΣΙΜΟ", "Diesel")).strip()
+                                    fuel = str(row.get("ΚΑΥΣΙΜΟ", "BENZINH")).strip()
                                     driver = str(row.get("ΦΟΡΕΑΣ_ΧΡΗΣΗΣ", row.get("ΟΔΗΓΟΣ", "Αναμονή"))).strip()
                                     km = row.get("ΧΛΜ_1_1_2022", row.get("TOTALKM", 0))
                                     
-                                    # Αναζήτηση Έτους Πρώτης Κυκλοφορίας
                                     year_val = (
                                         row.get("ΕΤΟΣ_ΠΡΩΤΗΣ_ΚΥΚΛΟΦΟΡΙΑΣ") or 
                                         row.get("ΕΤΟΣ ΠΡΩΤΗΣ ΚΥΚΛΟΦΟΡΙΑΣ") or 
                                         row.get("ΕΤΟΣ_ΚΥΚΛΟΦΟΡΙΑΣ") or 
                                         row.get("ΕΤΟΣ") or 
-                                        row.get("YEAR") or 
-                                        row.get("FIRST_REGISTRATION_YEAR")
+                                        row.get("YEAR")
                                     )
                                     
                                     try:
@@ -189,9 +185,8 @@ elif menu == "Εισαγωγή PDF & Excel":
 
                                     try:
                                         if pd.notna(year_val) and str(year_val).strip() != "":
-                                            # Εξαγωγή 4ψηφιου αριθμού έτους (π.χ. 2018)
                                             year_match = re.search(r'\b(19\d{2}|20\d{2})\b', str(year_val))
-                                            year = int(year_match.group(0)) if year_match else int(year_val)
+                                            year = int(year_match.group(0)) if year_match else str(year_val)
                                         else:
                                             year = "Δεν αναγράφεται"
                                     except:
@@ -202,7 +197,7 @@ elif menu == "Εισαγωγή PDF & Excel":
                                         "LicensePlate": clean_plate,
                                         "MakeModel": f"{make} {model}".strip() if (make or model) else "Άγνωστο",
                                         "Year": year,
-                                        "FuelType": fuel if fuel != "nan" else "Diesel",
+                                        "FuelType": fuel if fuel != "nan" else "BENZINH",
                                         "Status": "Ενεργό",
                                         "Driver": driver if driver != "nan" else "Αναμονή",
                                         "TotalKM": km_val,
@@ -225,27 +220,35 @@ elif menu == "Εισαγωγή PDF & Excel":
                         except Exception as e:
                             st.warning(f"Αδυναμία ανάγνωσης κειμένου από το {file.name}: {e}")
 
+                        # 1. Πινακίδα
                         plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', extracted_text.upper())
                         if not plate_match:
                             plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', file.name.upper())
-                        
                         plate = plate_match.group(1).replace(" ", "").replace("-", "") if plate_match else "ΑΓΝΩΣΤΗ"
 
+                        # 2. Αριθμός Πλαισίου (VIN)
                         vin_match = re.search(r'\b[A-HJ-NPR-Z0-9]{17}\b', extracted_text.upper())
-                        vin = vin_match.group(0) if vin_match else "Δ/Α (Από PDF)"
+                        vin = vin_match.group(0) if vin_match else "Δ/Α"
 
-                        # Αναζήτηση έτους στο κείμενο του PDF
-                        year_match = re.search(r'(?:ΕΤΟΣ|ΠΡΩΤΗ ΚΥΚΛΟΦΟΡΙΑ|REGISTRATION)[:\s]*\b(19\d{2}|20\d{2})\b', extracted_text.upper())
-                        pdf_year = year_match.group(1) if year_match else "Δεν αναγράφεται"
+                        # 3. Έτος Πρώτης Κυκλοφορίας (Αναζήτηση ημερομηνιών ΗΗ/ΜΜ/ΕΕΕΕ)
+                        dates_found = re.findall(r'\b\d{2}/\d{2}/(19\d{2}|20\d{2})\b', extracted_text)
+                        pdf_year = dates_found[0] if dates_found else "Δεν αναγράφεται"
+
+                        # 4. Κάτοχος / Φορέας
+                        holder_match = re.search(r'(ΝΟΣΟΚΟΜΕΙΟ[^\n]*|ΚΥ [^\n]*|ΔΗΜΟΣ[^\n]*)', extracted_text.upper())
+                        driver = holder_match.group(0).strip() if holder_match else "Δημόσιος Φορέας"
+
+                        # 5. Καύσιμο
+                        fuel = "BENZINH" if "BENZI" in extracted_text.upper() or "ΒΕΝΖΙΝΗ" in extracted_text.upper() else "PETRELAIO"
 
                         parsed_vehicles.append({
                             "VIN": vin,
                             "LicensePlate": plate,
                             "MakeModel": "Έγγραφο Άδειας (PDF)",
                             "Year": pdf_year,
-                            "FuelType": "Diesel",
+                            "FuelType": fuel,
                             "Status": "Ενεργό",
-                            "Driver": "Αναμονή",
+                            "Driver": driver,
                             "TotalKM": 0.0,
                             "MonthlyKM": 0.0,
                             "TireCondition": "Καλή",
@@ -255,10 +258,11 @@ elif menu == "Εισαγωγή PDF & Excel":
 
                 if parsed_vehicles:
                     new_df = pd.DataFrame(parsed_vehicles)
-                    st.session_state.vehicles = pd.concat([st.session_state.vehicles, new_df], ignore_index=True).drop_duplicates(subset=["LicensePlate"], keep="first").reset_index(drop=True)
+                    # Ενημέρωση και αφαίρεση διπλότυπων βάσει πινακίδας
+                    st.session_state.vehicles = pd.concat([st.session_state.vehicles, new_df], ignore_index=True).drop_duplicates(subset=["LicensePlate"], keep="last").reset_index(drop=True)
                     st.session_state.vehicles.to_csv(DB_FILE, index=False)
-                    st.success(f"Εισήχθησαν επιτυχώς {len(parsed_vehicles)} εγγραφές και αποθηκεύτηκαν μόνιμα!")
-                    st.info("💡 Αν θέλετε να ανανεωθούν τα έτη στα ήδη καταχωρημένα οχήματα, πατήστε '🗑️ Διαγραφή Δεδομένων' στη Sidebar και ξαναφορτώστε το Excel.")
+                    st.success(f"Εισήχθησαν επιτυχώς {len(parsed_vehicles)} εγγραφές!")
+                    st.info("💡 Πατήστε '🗑️ Διαγραφή Δεδομένων' στη Sidebar αν θέλετε να καθαρίσετε τη βάση και να ανεβάσετε τα νέα αρχεία.")
 
 # PAGE 4: GOOGLE DRIVE WATCHER
 elif menu == "Google Drive Watcher":
