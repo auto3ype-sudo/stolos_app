@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import re
 import pdfplumber
+import pytesseract
+from pdf2image import convert_from_bytes
+from PIL import Image
 
 st.set_page_config(
     page_title="Fleet Management System",
@@ -17,10 +20,11 @@ if "vehicles" not in st.session_state:
         "TotalMaintenanceCost", "SustainabilityStatus"
     ])
 
-def parse_pdf_registration(pdf_file):
-    """Εξαγωγή κειμένου από PDF άδειας κυκλοφορίας"""
+def extract_text_from_pdf(pdf_file):
+    """Εξαγωγή κειμένου: Πρώτα προσπάθεια με pdfplumber, αν είναι άδειο -> OCR με Tesseract"""
     full_text = ""
     try:
+        # 1. Δοκιμή απευθείας ανάγνωσης κειμένου
         with pdfplumber.open(pdf_file) as pdf:
             for page in pdf.pages:
                 text = page.extract_text()
@@ -29,9 +33,26 @@ def parse_pdf_registration(pdf_file):
     except Exception:
         pass
 
+    # 2. Αν δεν βρέθηκε κείμενο (σκαναρισμένη εικόνα), εκτέλεση OCR
+    if len(full_text.strip()) < 20:
+        try:
+            pdf_file.seek(0)
+            images = convert_from_bytes(pdf_file.read())
+            for img in images:
+                # OCR για Ελληνικά + Αγγλικά
+                ocr_text = pytesseract.image_to_string(img, lang="ell+eng")
+                full_text += ocr_text + "\n"
+        except Exception as e:
+            st.warning(f"Προειδοποίηση OCR: {e}")
+
+    return full_text
+
+def parse_pdf_registration(pdf_file):
+    """Επεξεργασία και εξόρυξη πεδίων από το PDF/OCR"""
+    full_text = extract_text_from_pdf(pdf_file)
     text_upper = full_text.upper()
 
-    plate, vin, make_model, fuel = None, "Δ/Α", "Έγγραφο Άδειας (PDF)", "Δ/Α"
+    plate, vin, make_model, fuel = "Δ/Α", "Δ/Α", "Έγγραφο Άδειας (PDF)", "Δ/Α"
 
     # 1. Πινακίδα
     plate_match = re.search(r'([A-ZΆ-Ω]{3}\s*[-]?\s*\d{4})', text_upper)
@@ -41,7 +62,7 @@ def parse_pdf_registration(pdf_file):
         file_match = re.search(r'([A-ZΆ-Ω]{3}\s*\d{4})', pdf_file.name.upper())
         plate = file_match.group(1) if file_match else pdf_file.name.replace('.pdf', '')
 
-    # 2. VIN / Αριθμός Πλαισίου
+    # 2. VIN / Αριθμός Πλαισίου (17 χαρακτήρες)
     vin_match = re.search(r'\b([A-HJ-NPR-Z0-9]{17})\b', text_upper)
     if vin_match:
         vin = vin_match.group(1)
@@ -53,7 +74,7 @@ def parse_pdf_registration(pdf_file):
         fuel = "Diesel"
 
     # 4. Μάρκα & Μοντέλο
-    makes = ["TOYOTA", "MERCEDES", "FORD", "NISSAN", "VOLKSWAGEN", "FIAT", "PEUGEOT", "RENAULT", "SKODA", "CITROEN", "OPEL"]
+    makes = ["TOYOTA", "MERCEDES", "FORD", "NISSAN", "VOLKSWAGEN", "FIAT", "PEUGEOT", "RENAULT", "SKODA", "CITROEN", "OPEL", "HYUNDAI", "KIA", "SUZUKI", "SEAT", "AUDI", "BMW"]
     found_make = ""
     for m in makes:
         if m in text_upper:
@@ -65,6 +86,9 @@ def parse_pdf_registration(pdf_file):
         if "YARIS" in text_upper: make_model += " Yaris"
         elif "SPRINTER" in text_upper: make_model += " Sprinter"
         elif "TRANSIT" in text_upper: make_model += " Transit"
+        elif "CADDY" in text_upper: make_model += " Caddy"
+        elif "DOBLO" in text_upper: make_model += " Doblo"
+        elif "DUCATO" in text_upper: make_model += " Ducato"
 
     return {
         "VIN": vin,
@@ -83,7 +107,7 @@ def parse_pdf_registration(pdf_file):
 
 # --- SIDEBAR ---
 st.sidebar.title("🚛 Fleet Manager")
-st.sidebar.success("📌 Εκδοση: **v2.5 - Stable Build**")
+st.sidebar.success("📌 Εκδοση: **v2.6 - Smart OCR Build**")
 st.sidebar.caption("Google Account: auto3ype@gmail.com")
 
 menu = st.sidebar.radio(
@@ -153,7 +177,7 @@ elif menu == "Καρτέλα Οχήματος":
 
 # PAGE 3: IMPORT PDF & EXCEL
 elif menu == "Εισαγωγή PDF & Excel":
-    st.title("📂 Αυτόματη Αναγνώριση Εγγράφων (PDF & Excel)")
+    st.title("📂 Αυτόματη Αναγνώριση Εγγράφων (PDF & Excel - Smart OCR)")
     
     uploaded_files = st.file_uploader(
         "Επιλέξτε αρχεία PDF ή Excel",
@@ -165,7 +189,7 @@ elif menu == "Εισαγωγή PDF & Excel":
         if st.button("🔄 Επεξεργασία & Συγχρονισμός στο Dashboard", type="primary"):
             parsed_vehicles = []
             
-            with st.spinner("Γίνεται επεξεργασία εγγράφων..."):
+            with st.spinner("Γίνεται επεξεργασία & OCR ανάγνωση εγγράφων..."):
                 for file in uploaded_files:
                     if file.name.endswith(('.xlsx', '.xls')):
                         try:
@@ -210,7 +234,7 @@ elif menu == "Εισαγωγή PDF & Excel":
                     new_df = pd.DataFrame(parsed_vehicles)
                     st.session_state.vehicles = pd.concat([st.session_state.vehicles, new_df], ignore_index=True).drop_duplicates(subset=["LicensePlate"], keep="first").reset_index(drop=True)
                     st.success(f"Ενημερώθηκαν επιτυχώς {len(parsed_vehicles)} οχήματα!")
-                    st.info("💡 Μεταβείτε στο 'Dashboard Στόλου' από τη στήλη αριστερά.")
+                    st.info("💡 Μεταβείτε στο 'Dashboard Στόλου' από τη στήλη αριστερά για να δείτε τα αποτελέσματα.")
 
 # PAGE 4: GOOGLE DRIVE WATCHER
 elif menu == "Google Drive Watcher":
